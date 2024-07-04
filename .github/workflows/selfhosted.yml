@@ -444,6 +444,8 @@ jobs:
         # Set up build environment
         export BUILD_USERNAME=${{ github.actor }} ; \
         export BUILD_HOSTNAME=crave ; \
+        export BUILD_USERNAME=Assunzain ; \
+        export TZ=Asia/Jakarta ; \
         source build/envsetup.sh && \
 
         echo "Repository: ${{ github.repository }}"; \

@@ -135,7 +135,7 @@ jobs:
           export REPO_INIT="repo init -u https://github.com/LineageOS/android.git -b lineage-21.0 --git-lfs --depth=1"
         ;;
         "LineageOS 20.0")
-          export PROJECTFOLDER="/crave-devspaces/Lineage20"
+          export PROJECTFOLDER="/crave-devspaces/LOS20"
           export PROJECTID="36"
           export REPO_INIT="repo init -u https://github.com/accupara/los20.git -b lineage-20.0 --git-lfs --depth=1"
         ;;

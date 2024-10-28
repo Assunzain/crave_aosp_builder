@@ -13,7 +13,7 @@ on:
       BASE_PROJECT:
         description: 'Choose a base project:'
         required: true
-        default: 'LineageOS 20.0'
+        default: 'LineageOS 21.0'
         type: choice
         options:
           - 'LineageOS 20.0'
@@ -26,6 +26,7 @@ on:
           - 'LineageOS 18.1'
           - 'LineageOS 16.0'
           - 'CyanogenMOD 14.1'
+          - 'AOSP'
       BUILD_DIFFERENT_ROM:
         description: "Command to initialize a different 'repo' project:"
         required: false
@@ -36,11 +37,11 @@ on:
       LOCAL_MANIFEST:
         description: "Personal local manifest [repository or raw]:"
         required: true
-        default: 'https://github.com/sounddrill31/local_manifests'
+        default: 'https://github.com/sounddrill31/local_manifests_oxygen'
       LOCAL_MANIFEST_BRANCH:
         description: "Personal local manifest's branch:"
         required: false
-        default: 'lineage-oxygen'
+        default: 'lineage-21-qpr3'
       DEVICE_NAME:
         description: "Device's codename:"
         required: true
@@ -48,7 +49,7 @@ on:
       PRODUCT_NAME:
         description: "Product to build:"
         required: true
-        default: "lineage_oxygen"
+        default: "oxygen"
       BUILD_COMMAND:
         description: 'Command to be used for compiling:'
         required: true
@@ -87,7 +88,8 @@ jobs:
       # Download and configure 'crave'.
     - name: Configure the 'crave' environment
       run: |
-        if [ "${DCDEVSPACE}" == "1" ]; then
+        echo "DCDEVSPACE status: ${DCDEVSPACE}"
+        if [[ "${DCDEVSPACE}" == "1" ]]; then
         echo 'No need to set up crave, we are already running in devspace!'
         else
           mkdir ${HOME}/bin/
@@ -103,7 +105,16 @@ jobs:
 
     - name: Run crave devspace
       run: |
-        crave ${{ secrets.CRAVE_FLAGS }} devspace -- "if tmux has-session -t ghactions; then 
+        crave ${{ secrets.CRAVE_FLAGS }} devspace -- "echo "Looking for runner..."
+          # Look for whether there's a runner folder set up
+          if [ -f actions-runner/run.sh ] ; then
+            echo "Runner found! Restarting it..."
+          else
+            echo "Error! Runner not found!"
+            exit 1
+          fi
+
+        if tmux has-session -t ghactions; then 
           echo "Runner is already Running" 
         else 
           tmux kill-session -t ghactions;
@@ -115,6 +126,12 @@ jobs:
     name: Prepare for Building
     runs-on: ubuntu-latest
     steps:
+    - name: Check-out to repository
+      uses: actions/checkout@v4
+
+    - name: Check Credentials
+      run: bash scripts/env-checker.sh
+
     - name: Set Project variables
       id: proj-variables
       run: |
@@ -169,9 +186,14 @@ jobs:
           export PROJECTID="83"
           export REPO_INIT="repo init -u https://github.com/accupara/los-cm14.1.git -b cm-14.1 --git-lfs --depth=1"
         ;;
+        "AOSP")
+          export PROJECTFOLDER="/crave-devspaces/AOSP"
+          export PROJECTID="35"
+          export REPO_INIT="repo init -u https://android.googlesource.com/platform/manifest.git -b master --git-lfs --depth=1"
+        ;;
         esac
 
-        if [[ ${{ github.event.inputs.PRODUCT_NAME }} == *_* ]] && [[ ${{ github.event.inputs.PRODUCT_NAME }} != gsi_* ]] && [[ ${{ github.event.inputs.PRODUCT_NAME }} != sdk_* ]]; then
+        if [[ ${{ github.event.inputs.PRODUCT_NAME }} == *_* ]] && [[ ${{ github.event.inputs.PRODUCT_NAME }} != gsi_* ]] && [[ ${{ github.event.inputs.PRODUCT_NAME }} != sdk_* ]] && [[ ${{ github.event.inputs.PRODUCT_NAME }} != *_sprout ]] && [[ ${{ github.event.inputs.PRODUCT_NAME }} != Mi439_* ]] && [[ ${{ github.event.inputs.PRODUCT_NAME }} != Mi8937_* ]]; then
           LUNCH="lunch ${{ github.event.inputs.PRODUCT_NAME }}-${{ github.event.inputs.BUILD_TYPE }}"
         elif [[ "${{ github.event.inputs.BASE_PROJECT }}" == "RisingOS 14" ]] && [[ "${{ github.event.inputs.BUILD_DIFFERENT_ROM }}" == "echo 'Build Starting!'" ]]; then
             LUNCH="riseup ${{ github.event.inputs.PRODUCT_NAME }} ${{ github.event.inputs.BUILD_TYPE }}"
@@ -179,12 +201,22 @@ jobs:
             LUNCH="breakfast ${{ github.event.inputs.PRODUCT_NAME }} ${{ github.event.inputs.BUILD_TYPE }}"
         fi
 
+          if [[ "${{ github.event.inputs.LOCAL_MANIFEST }}" =~ \.xml(/)?$ ]]; then
+            local_manifest_url="${{ github.event.inputs.LOCAL_MANIFEST }}"
+            export local_manifest_url="${local_manifest_url%/}"  # remove trailing slash if it exists
+            LOCAL_MANIFEST="mkdir -p .repo/local_manifests && rm -rf .repo/local_manifests/* || true && curl -o .repo/local_manifests/local_manifest.xml ${local_manifest_url}"
+          else
+            export LOCAL_MANIFEST="git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{github.event.inputs.LOCAL_MANIFEST_BRANCH}} .repo/local_manifests"
+          fi
+
         echo "Building on ${{ github.event.inputs.BASE_PROJECT }} project"
         echo "PROJECTFOLDER=$PROJECTFOLDER" >> "$GITHUB_OUTPUT"
         echo "PROJECTID=$PROJECTID"  >> "$GITHUB_OUTPUT"
         echo "REPO_INIT=$REPO_INIT" >> "$GITHUB_OUTPUT"
         echo "LUNCH=$LUNCH" >> "$GITHUB_ENV"
         echo "LUNCH=$LUNCH" >> "$GITHUB_OUTPUT"
+        echo "LOCAL_MANIFEST=$LOCAL_MANIFEST" >> "$GITHUB_ENV"
+        echo "LOCAL_MANIFEST=$LOCAL_MANIFEST" >> "$GITHUB_OUTPUT"
 
     - name: Display Run Parameters # Credit to azwhikaru for this part
       run: |
@@ -202,8 +234,8 @@ jobs:
 
         echo "Displaying Local Manifests"
         if [[ -z "${{ secrets.DISPLAY_FALSE }}" ]]; then
-          git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} local_manifests
-          cat local_manifests/*.xml
+          bash -c "$LOCAL_MANIFEST"
+          cat .repo/local_manifests/*.xml
         else
           echo "Displaying is disabled through secrets."
         fi
@@ -212,6 +244,7 @@ jobs:
       PROJECTID: ${{ steps.proj-variables.outputs.PROJECTID }}
       REPO_INIT: ${{ steps.proj-variables.outputs.REPO_INIT }}
       LUNCH: ${{ steps.proj-variables.outputs.LUNCH }}
+      LOCAL_MANIFEST: ${{ steps.proj-variables.outputs.LOCAL_MANIFEST }}
 
   test:
     name: Test Local Manifests
@@ -225,11 +258,13 @@ jobs:
         PROJECTID="${{ needs.prepare.outputs.PROJECTID }}"
         REPO_INIT="${{ needs.prepare.outputs.REPO_INIT }}"
         LUNCH="${{ needs.prepare.outputs.LUNCH }}"
+        LOCAL_MANIFEST="${{ needs.prepare.outputs.LOCAL_MANIFEST }}"
 
         echo "PROJECTFOLDER=$PROJECTFOLDER" >> "$GITHUB_ENV"
         echo "PROJECTID=$PROJECTID"  >> "$GITHUB_ENV"
         echo "REPO_INIT=$REPO_INIT" >> "$GITHUB_ENV"
         echo "LUNCH=$LUNCH" >> "$GITHUB_ENV"
+        echo "LOCAL_MANIFEST=$LOCAL_MANIFEST" >> "$GITHUB_ENV"
 
       # Download and configure 'repo'.
     - name: Configure the 'repo' environment
@@ -269,13 +304,9 @@ jobs:
         else
           ${{ github.event.inputs.BUILD_DIFFERENT_ROM }}
         fi 
-        git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} .repo/local_manifests && \
 
-        if [ ! $? == 0 ]; then \
-          curl -o .repo/local_manifests ${{ github.event.inputs.LOCAL_MANIFEST }}; \
-          echo "Git clone failed, downloading through curl instead..."; \ 
-        fi \
-    
+        bash -c "$LOCAL_MANIFEST"
+
         timeout 1m repo sync --force-sync || { exit_code=$?; [ $exit_code -eq 124 ] || (echo "Error: Process failed with exit code $exit_code"; exit $exit_code); }
         du -csh . # Output Size when done
         rm -rf .repo
@@ -285,14 +316,15 @@ jobs:
       PROJECTID: ${{ needs.prepare.outputs.PROJECTID }}
       REPO_INIT: ${{ needs.prepare.outputs.REPO_INIT }}
       LUNCH: ${{ needs.prepare.outputs.LUNCH }}
+      LOCAL_MANIFEST: "${{ needs.prepare.outputs.LOCAL_MANIFEST }}"
 
   build:
-    timeout-minutes: 960      
+    timeout-minutes: 1440
     name: Build using foss.crave.io
-    needs: test 
+    needs: test
     runs-on: self-hosted
     concurrency:
-      group: ${{ github.actor }}
+      group: ${{ github.repository_owner }}
     steps:
       # Accept Project Variables
     - name: Set Repo Project
@@ -301,11 +333,13 @@ jobs:
         PROJECTID="${{ needs.test.outputs.PROJECTID }}"
         REPO_INIT="${{ needs.test.outputs.REPO_INIT }}"
         LUNCH="${{ needs.test.outputs.LUNCH }}"
+        LOCAL_MANIFEST="${{ needs.test.outputs.LOCAL_MANIFEST }}"
 
         echo "PROJECTFOLDER=$PROJECTFOLDER" >> "$GITHUB_ENV"
         echo "PROJECTID=$PROJECTID"  >> "$GITHUB_ENV"
         echo "REPO_INIT=$REPO_INIT" >> "$GITHUB_ENV"
         echo "LUNCH=$LUNCH" >> "$GITHUB_ENV"
+        echo "LOCAL_MANIFEST=$LOCAL_MANIFEST" >> "$GITHUB_ENV"
 
       # Send Build 'start' notification
     - name: Telegram Notification
@@ -333,7 +367,8 @@ jobs:
       # Create a project folder
     - name: Create Project Folders
       run: |
-        if [ "${DCDEVSPACE}" != "1" ]; then
+        echo "DCDEVSPACE status: ${DCDEVSPACE}"
+        if [[ "${DCDEVSPACE}" != "1" ]]; then
           echo "Symlinking devspace folder"
           mkdir -p devspace
           sudo mkdir -p /crave-devspaces
@@ -342,13 +377,13 @@ jobs:
         else
           echo "We are already running in devspace... Skipping Symlinks"
         fi
-        if grep -q "$PROJECTFOLDER" <(crave clone list --json | jq -r '.clones[]."Cloned At"') && [ "${DCDEVSPACE}" == "1" ]; then
+        if grep -q "$PROJECTFOLDER" <(crave clone list --json | jq -r '.clones[]."Cloned At"') || [[ "${DCDEVSPACE}" == "1" ]]; then
           crave clone destroy -y $PROJECTFOLDER || echo "Error removing $PROJECTFOLDER"
         else          
         echo "Skipping removal"
         fi
 
-        if [ "${DCDEVSPACE}" == "1" ]; then
+        if [[ "${DCDEVSPACE}" == "1" ]]; then
           crave clone create --projectID $PROJECTID $PROJECTFOLDER || echo "Crave clone create failed!"
         else
           mkdir $PROJECTFOLDER
@@ -375,8 +410,9 @@ jobs:
       # Download and configure 'crave'.
     - name: Configure the 'crave' environment
       run: |
+        echo "DCDEVSPACE status: ${DCDEVSPACE}"
         mkdir -p $PROJECTFOLDER/.repo/manifests
-        if [ "${DCDEVSPACE}" == "1" ]; then
+        if [[ "${DCDEVSPACE}" == "1" ]]; then
         echo 'No need to set up crave, we are already running in devspace!'
         else
           curl -s https://raw.githubusercontent.com/accupara/crave/master/get_crave.sh | bash -s --
@@ -402,7 +438,7 @@ jobs:
     - name: Set the 'crave' project
       run: |
         cd $PROJECTFOLDER
-        if grep -q "$PROJECTFOLDER" <(crave clone list --json | jq -r '.clones[]."Cloned At"') && [ "${DCDEVSPACE}" == "1" ]; then
+        if grep -q "$PROJECTFOLDER" <(crave clone list --json | jq -r '.clones[]."Cloned At"') || [[ "${DCDEVSPACE}" == "1" ]]; then
           echo "Using Crave Clone... skipping"
         else
           echo "Running $REPO_INIT"
@@ -430,19 +466,19 @@ jobs:
            export CLEAN="clean"
         fi
 
+        echo "Build is queued! Please wait for your build to start."
+        echo "Check foss.crave.io Dashboard to see builds"
+        echo "Running build's log will show up here!"
+
+
         crave run --no-patch --${CLEAN} "rm -rf .repo/local_manifests/ ${{ github.event.inputs.REMOVALS }} && \
         # Clone local_manifests repository
         $BUILD_DIFFERENT_ROM ; \
-        git clone ${{ github.event.inputs.LOCAL_MANIFEST }} --depth 1 -b ${{ github.event.inputs.LOCAL_MANIFEST_BRANCH }} .repo/local_manifests && \
+        $LOCAL_MANIFEST && \
 
-        if [ ! \$? == 0 ]; then \
-          curl -o .repo/local_manifests ${{ github.event.inputs.LOCAL_MANIFEST }}; \
-          echo "Git clone failed, downloading through curl instead..."; \
-        fi \
-        
         # Sync the repositories
         /opt/crave/resync.sh  && \
-        
+
         # Set up build environment
         export BUILD_USERNAME=${{ github.actor }} ; \
         export BUILD_HOSTNAME=crave ; \
@@ -456,7 +492,7 @@ jobs:
         $LUNCH && \
         make installclean && \
         ${{ github.event.inputs.BUILD_COMMAND }}"
-      timeout-minutes: 960
+      timeout-minutes: 1440
 
       # Send Build 'status' notification (Success)
     - name: Telegram Notification
@@ -500,7 +536,7 @@ jobs:
           jobMessage="has Failed!"
         fi
 
-        send_telegram_message "Crave Project: ${{ github.event.inputs.BASE_PROJECT }}%0ACrave ProjectID: $PROJECTID %0ABuild for ${{ github.event.inputs.DEVICE_NAME }} has status: $jobMessage %0ACheck Progress at: %0Ahttps://github.com/$(echo "${{ github.repository }}" | sed 's@_@\\_@g')/actions/runs/${{ github.run_id }}"
+        send_telegram_message "Crave Project: ${{ github.event.inputs.BASE_PROJECT }}%0ACrave ProjectID: $PROJECTID %0ABuild for ${{ github.event.inputs.DEVICE_NAME }} $jobMessage %0ACheck Progress at: %0Ahttps://github.com/$(echo "${{ github.repository }}" | sed 's@_@\\_@g')/actions/runs/${{ github.run_id }}"
         # Todo: error.log link
       env:
         chatId: ${{ secrets.TELEGRAM_TO }}
@@ -545,7 +581,7 @@ jobs:
     - name: Destroy Crave Clone
       if: ${{ always() }}
       run: |
-        if grep -q "$PROJECTFOLDER" <(crave clone list --json | jq -r '.clones[]."Cloned At"') && [ "${DCDEVSPACE}" == "1" ]; then
+        if grep -q "$PROJECTFOLDER" <(crave clone list --json | jq -r '.clones[]."Cloned At"') || [[ "${DCDEVSPACE}" == "1" ]]; then
           crave clone destroy -y $PROJECTFOLDER || echo "Error removing $PROJECTFOLDER"
         else          
           echo "Skipping removal"
